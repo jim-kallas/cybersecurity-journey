@@ -3,7 +3,7 @@
 Self directed training log, starting May 2026.
 Goal: become job ready as SOC analyst by graduation (Spring 2027), then move toward pentesting.
 
-##Progress
+## Progress
 
 - [X] Module 1 - Linux Fundamentals & Lab Setup
 - [ ] Module 2 - Networking, From the Packet Up
